@@ -1,0 +1,12 @@
+.kiro
+.vscode
+frontend/node_modules
+BEFORE_AFTER_COMPARISON.md
+CHANGES_SUMMARY.md
+QUICK_REFERENCE.md
+SECTION_STRUCTURE.md
+SECTION_STRUCTURE.md
+Sow-automation.pem
+start-backend.bat
+start-frontend.bat
+backend/.env
