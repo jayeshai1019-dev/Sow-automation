@@ -251,7 +251,7 @@ MOM:
 {mom_text}
 
 Output ONLY a pipe-delimited table. One AWS service per line. Exactly 4 columns. NO header row.
-Format: SERVICE_NAME | DEV_SPEC | UAT_SPEC | PROD_SPEC
+Format: SERVICE_NAME | DEV_SPEC | UAT_SPEC | PROD_SPEC Prod en
 
 - SERVICE_NAME: exact AWS service name
 - DEV_SPEC / UAT_SPEC / PROD_SPEC: short sizing description based on MOM (use — if not needed)
