@@ -10,3 +10,4 @@ Sow-automation.pem
 start-backend.bat
 start-frontend.bat
 backend/.env
+*/__pycache__/*

@@ -1,29 +1,33 @@
 import { useState } from 'react'
 import axios from 'axios'
 
-const API_BASE = 'http://65.0.3.119:8000'
+const API_BASE = 'http://localhost:8000'
 
 const OPTIONAL_SECTIONS = [
-  { key: 'include_landing_zone',      label: '3.4 Implementation of Landing Zone',       desc: 'OU structure, guardrails, AWS Identity Center setup' },
-  { key: 'include_control_tower',     label: '3.5 Configuration of Control Tower Setup', desc: 'Control Tower automation steps' },
-  { key: 'include_landing_zone_arch', label: '3.6 AWS Landing Zone Architecture',         desc: 'Multi-account architecture details' },
-  { key: 'include_paloalto',          label: '3.7 PaloAlto Next Generation Firewall',     desc: 'VM-Series features and capabilities' },
-  { key: 'include_mgn_migration',     label: '4.1 Migration of Data Using MGN',           desc: 'AWS Application Migration Service steps' },
+  { key: 'include_landing_zone',        label: '3.6 Implementation of Landing Zone',         desc: 'OU structure, guardrails, AWS Identity Center setup' },
+  { key: 'include_control_tower',       label: '3.7 Configuration of Control Tower Setup',   desc: 'Control Tower automation steps' },
+  { key: 'include_landing_zone_arch',   label: '3.8 AWS Landing Zone Architecture',           desc: 'Multi-account architecture details' },
+  { key: 'include_paloalto',            label: '3.9 PaloAlto Next Generation Firewall',       desc: 'VM-Series features and capabilities' },
+  { key: 'include_mgn_migration',       label: '4.1 Migration of Data Using MGN',             desc: 'AWS Application Migration Service steps' },
+  { key: 'include_testing_monitoring',  label: '4.2 Testing and Monitoring',                  desc: 'Post-deployment testing steps and DNS cutover' },
+  { key: 'include_monitoring',          label: '5. Monitoring AWS Infrastructure',             desc: 'CloudWatch dashboards, alerts and custom metrics' },
+  { key: 'include_dr',                  label: '6. Proposed DR Approach',                     desc: 'DR requirements, AWS DRS, architecture and solution' },
+  { key: 'include_post_deployment',     label: '4. Post-Deployment Testing and Acceptance',   desc: 'Client testing window, iteration limits, acceptance policy' },
 ]
 
 const STATIC_SECTIONS = [
-  '1.1 Confidentiality Notice', '1.2 About Operisoft', '4.2 Testing & Monitoring',
-  '5. Monitoring AWS Infrastructure', '6.2 AWS Elastic Disaster Recovery',
-  '8.1 IAM Best Practices', '8.2 IAM Access Analyzer', '8.3 Detective Controls',
-  '8.4 AWS Detective', '8.5 AWS Security Hub', '9. AWS Partner Deliverables',
-  '10. Customer Dependencies', '11. Assumptions', '12. Exclusions',
-  '13. Risk Analysis', '14. Project Plan', '15. Commercial Terms',
+  '1.1 Confidentiality Notice', '1.2 About Operisoft',
+  '5.1 AWS TCO Link', '5.2 Service Charges', '5.3 Estimated Timeline',
+  '10. Commercial Terms',
 ]
 
 const DYNAMIC_SECTIONS = [
   '1.3 About Customer', '2.1 Project Objectives', '2.2 Current Landscape',
-  '3.2 Key Highlights', '6.1 DR Requirements', '6.4 Proposed DRS Solution',
-  '7.1 TCO Link', '7.3 Cost Assumptions',
+  '3.2 Key Highlights', '5.4 Cost Assumptions (AI)',
+  '6. Customer Obligations and Engagement Terms (AI)',
+  '7. Customer Dependencies (AI)',
+  '8. Assumptions (AI)',
+  '9. Exclusions (AI)',
 ]
 
 function Toggle({ id, checked, onChange }) {
@@ -39,16 +43,40 @@ export default function App() {
   const [customerName, setCustomerName] = useState('')
   const [companyUrl,   setCompanyUrl]   = useState('')
   const [momText,      setMomText]      = useState('')
+  const [projectType,  setProjectType]  = useState('POC')   // 'POC' | 'Production'
+  const [docDate,      setDocDate]      = useState(new Date().toISOString().split('T')[0])
+  const [submittedBy,  setSubmittedBy]  = useState('')
+  const [clientLogo,   setClientLogo]   = useState(null)
+  const [logoPreview,  setLogoPreview]  = useState(null)
   const [toggles, setToggles] = useState({
-    include_landing_zone:      false,
-    include_control_tower:     false,
-    include_landing_zone_arch: false,
-    include_paloalto:          false,
-    include_mgn_migration:     false,
+    include_landing_zone:       false,
+    include_control_tower:      false,
+    include_landing_zone_arch:  false,
+    include_paloalto:           false,
+    include_mgn_migration:      false,
+    include_testing_monitoring: false,
+    include_monitoring:         false,
+    include_dr:                 false,
+    include_post_deployment:    false,
   })
   const [status, setStatus] = useState(null)
 
   const handleToggle = (key) => setToggles(prev => ({ ...prev, [key]: !prev[key] }))
+
+  const handleLogoChange = (e) => {
+    const file = e.target.files[0]
+    if (file) {
+      setClientLogo(file)
+      const reader = new FileReader()
+      reader.onload = (ev) => setLogoPreview(ev.target.result)
+      reader.readAsDataURL(file)
+    }
+  }
+
+  const handleLogoRemove = () => {
+    setClientLogo(null)
+    setLogoPreview(null)
+  }
 
   const handleGenerate = async () => {
     if (!customerName.trim()) { alert('Please enter the customer name.');       return }
@@ -56,15 +84,24 @@ export default function App() {
 
     setStatus('loading')
     try {
+      const formData = new FormData()
+      formData.append('customer_name', customerName)
+      formData.append('mom_text', momText)
+      formData.append('company_url', companyUrl)
+      formData.append('project_type', projectType)
+      formData.append('doc_date', docDate ? docDate.split('-').reverse().join('.') : '')
+      formData.append('submitted_by', submittedBy)
+      Object.entries(toggles).forEach(([key, val]) => {
+        formData.append(key, val ? 'true' : 'false')
+      })
+      if (clientLogo) {
+        formData.append('client_logo', clientLogo)
+      }
+
       const response = await axios.post(
         `${API_BASE}/generate-sow`,
-        { 
-          customer_name: customerName, 
-          mom_text: momText, 
-          company_url: companyUrl,
-          ...toggles 
-        },
-        { responseType: 'blob' }
+        formData,
+        { responseType: 'blob', headers: { 'Content-Type': 'multipart/form-data' } }
       )
       const url  = window.URL.createObjectURL(new Blob([response.data]))
       const link = document.createElement('a')
@@ -112,6 +149,53 @@ export default function App() {
                 onChange={e => setCustomerName(e.target.value)}
               />
             </div>
+
+            {/* Date and Submitted By */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+              <div className="field-group" style={{ marginBottom: 0 }}>
+                <label htmlFor="docDate">Document Date *</label>
+                <input
+                  id="docDate"
+                  type="date"
+                  value={docDate}
+                  onChange={e => setDocDate(e.target.value)}
+                />
+              </div>
+              <div className="field-group" style={{ marginBottom: 0 }}>
+                <label htmlFor="submittedBy">Submitted By *</label>
+                <input
+                  id="submittedBy"
+                  type="text"
+                  placeholder="Enter name"
+                  value={submittedBy}
+                  onChange={e => setSubmittedBy(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* POC / Production toggle */}
+            <div className="field-group" style={{ marginBottom: '0.75rem' }}>
+              <label>Engagement Type</label>
+              <div className="project-type-toggle">
+                <button
+                  type="button"
+                  className={`ptype-btn${projectType === 'POC' ? ' ptype-active' : ''}`}
+                  onClick={() => setProjectType('POC')}
+                >
+                  POC
+                </button>
+                <button
+                  type="button"
+                  className={`ptype-btn${projectType === 'Production' ? ' ptype-active' : ''}`}
+                  onClick={() => setProjectType('Production')}
+                >
+                  Production
+                </button>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.3rem', marginBottom: 0 }}>
+                Tells the AI whether this is a <strong>Proof of Concept</strong> or a <strong>Production</strong> engagement — affects tone, scope, and disclaimers in the generated SOW.
+              </p>
+            </div>
             <div className="field-group" style={{ marginBottom: 0 }}>
               <label htmlFor="companyUrl">Company Website URL <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></label>
               <input
@@ -125,6 +209,43 @@ export default function App() {
                 Company info will be auto-extracted and used to write the <strong>1.3 About Customer</strong> section.
               </p>
             </div>
+          </div>
+
+          {/* Client Logo Upload */}
+          <div className="card" style={{ marginBottom: '1.25rem' }}>
+            <div className="card-title">Client Logo</div>
+            <p style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.75rem' }}>
+              Upload the client's logo to include on the SOW cover page.
+            </p>
+            <div className="logo-upload-area">
+              {logoPreview ? (
+                <div className="logo-preview-container">
+                  <img src={logoPreview} alt="Client logo preview" className="logo-preview-img" />
+                  <div className="logo-preview-info">
+                    <span className="logo-filename">{clientLogo?.name}</span>
+                    <button type="button" className="logo-remove-btn" onClick={handleLogoRemove}>
+                      ✕ Remove
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <label htmlFor="logoUpload" className="logo-dropzone">
+                  <div className="logo-dropzone-icon">🖼️</div>
+                  <div className="logo-dropzone-text">Click to upload logo</div>
+                  <div className="logo-dropzone-hint">PNG, JPG, SVG — max 5MB</div>
+                  <input
+                    id="logoUpload"
+                    type="file"
+                    accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                    onChange={handleLogoChange}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+              )}
+            </div>
+            <p style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '0.5rem', marginBottom: 0 }}>
+              The logo will appear centered on the cover page, above the customer name — matching the template layout.
+            </p>
           </div>
 
           {/* MOM notes */}

@@ -2,7 +2,7 @@ import os
 import re
 import tempfile
 from docx import Document
-from docx.shared import Pt, RGBColor, Inches, Cm
+from docx.shared import Pt, RGBColor, Inches, Cm, Emu
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.oxml.ns import qn
@@ -20,6 +20,10 @@ from bedrock_client import (
     generate_high_level_scope,
     generate_scope_of_work,
     generate_acceptance_criteria,
+    generate_customer_obligations,
+    generate_customer_dependencies,
+    generate_assumptions,
+    generate_exclusions,
 )
 from pricing_client import build_pricing_estimate
 
@@ -27,6 +31,247 @@ from pricing_client import build_pricing_estimate
 
 ORANGE = RGBColor(0xFF, 0x6B, 0x00)   # Operisoft brand orange
 DARK   = RGBColor(0x1F, 0x27, 0x63)   # dark navy
+
+# ── Document font constants ──
+FONT_NAME = "Calibri"
+FONT_HEADING1_SIZE = Pt(16)
+FONT_HEADING2_SIZE = Pt(13)
+FONT_BODY_SIZE = Pt(10.5)
+FONT_SMALL_SIZE = Pt(9)
+
+
+def _set_document_defaults(doc):
+    """Set default font to Calibri for the entire document."""
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = FONT_NAME
+    font.size = FONT_BODY_SIZE
+    # Set paragraph spacing defaults
+    pf = style.paragraph_format
+    pf.space_after = Pt(6)
+    pf.line_spacing = 1.15
+
+
+def _add_header_footer(doc, customer_name):
+    """Add footer to the document (no header per template design)."""
+    for section in doc.sections:
+        # ── No Header — keep it empty ──
+        header = section.header
+        header.is_linked_to_previous = False
+        # Clear any default header content
+        for p in header.paragraphs:
+            p.clear()
+
+        # ── Footer ──
+        footer = section.footer
+        footer.is_linked_to_previous = False
+        footer_para = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        footer_para.clear()
+        footer_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+        # Add top border line (horizontal rule)
+        pPr_f = footer_para._p.get_or_add_pPr()
+        pBdr_f = OxmlElement('w:pBdr')
+        top = OxmlElement('w:top')
+        top.set(qn('w:val'), 'single')
+        top.set(qn('w:sz'), '6')
+        top.set(qn('w:space'), '1')
+        top.set(qn('w:color'), '000000')
+        pBdr_f.append(top)
+        pPr_f.append(pBdr_f)
+
+        # Line 1: "Operisoft Technologies Pvt Ltd" — right aligned
+        run_f = footer_para.add_run("Operisoft Technologies Pvt Ltd")
+        run_f.font.name = "Calibri (Body)"
+        run_f.font.size = Pt(11)
+        run_f.font.bold = True
+        run_f.font.color.rgb = DARK
+
+        # Line 2: CIN / GSTIN / website / email
+        footer_para2 = footer.add_paragraph()
+        footer_para2.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        run_cin = footer_para2.add_run("CIN: U72900MH2022PTC384302| GSTIN: ")
+        run_cin.font.name = "Calibri (Body)"
+        run_cin.font.size = Pt(11)
+        run_cin.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+        run_gstin = footer_para2.add_run("27AADCO8045M1ZZ")
+        run_gstin.font.name = "Calibri (Body)"
+        run_gstin.font.size = Pt(11)
+        run_gstin.font.bold = True
+        run_gstin.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+        run_rest = footer_para2.add_run(" | www.operisoft.com | E: info@operisoft.com |")
+        run_rest.font.name = "Calibri (Body)"
+        run_rest.font.size = Pt(11)
+        run_rest.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+        # Line 3: Page number — right aligned
+        footer_para3 = footer.add_paragraph()
+        footer_para3.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        run_page = footer_para3.add_run("Page | ")
+        run_page.font.name = "Calibri (Body)"
+        run_page.font.size = Pt(11)
+        run_page.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+        # Add page number field
+        fldChar1 = OxmlElement('w:fldChar')
+        fldChar1.set(qn('w:fldCharType'), 'begin')
+        run_page._r.append(fldChar1)
+
+        instrText = OxmlElement('w:instrText')
+        instrText.set(qn('xml:space'), 'preserve')
+        instrText.text = " PAGE "
+        run_page._r.append(instrText)
+
+        fldChar2 = OxmlElement('w:fldChar')
+        fldChar2.set(qn('w:fldCharType'), 'end')
+        run_page._r.append(fldChar2)
+
+
+def _toc_entry(doc, text, level=0):
+    """Add a single TOC entry with dot leader tab stop matching Word's native TOC style."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(1)
+    p.paragraph_format.space_after = Pt(1)
+
+    if level == 0:
+        p.paragraph_format.left_indent = Inches(0)
+        run = p.add_run(text)
+        run.bold = True
+        run.font.name = "Calibri (Body)"
+        run.font.size = Pt(11)
+        run.font.color.rgb = DARK
+    else:
+        p.paragraph_format.left_indent = Inches(0.5)
+        run = p.add_run(text)
+        run.bold = False
+        run.font.name = "Calibri (Body)"
+        run.font.size = Pt(10)
+        run.font.color.rgb = DARK
+        run.font.small_caps = True
+
+    # Add right-aligned tab stop with dot leader for page number
+    pPr = p._p.get_or_add_pPr()
+    tabs = OxmlElement('w:tabs')
+    tab = OxmlElement('w:tab')
+    tab.set(qn('w:val'), 'right')
+    tab.set(qn('w:leader'), 'dot')
+    # Right tab at ~16cm (page width minus margins)
+    tab.set(qn('w:pos'), '9072')
+    tabs.append(tab)
+    pPr.append(tabs)
+
+
+def _build_toc(doc, project_type, include_post_deploy, include_landing_zone,
+               include_control_tower, include_lz_arch, include_paloalto,
+               include_mgn, include_testing_monitoring, include_monitoring, include_dr):
+    """Build a dynamic Table of Contents based on which sections are included."""
+
+    # TOC Title — "TABLE OF CONTENTS" with bottom border
+    toc_title = doc.add_paragraph()
+    toc_title.paragraph_format.space_after = Pt(12)
+    run_t = toc_title.add_run("Table of Contents")
+    run_t.bold = True
+    run_t.font.name = "Calibri (Body)"
+    run_t.font.size = Pt(24)
+    run_t.font.color.rgb = DARK
+    run_t.font.small_caps = True
+    # Bottom border line under the title
+    pPr = toc_title._p.get_or_add_pPr()
+    pBdr = OxmlElement('w:pBdr')
+    bottom = OxmlElement('w:bottom')
+    bottom.set(qn('w:val'), 'single')
+    bottom.set(qn('w:sz'), '8')
+    bottom.set(qn('w:space'), '1')
+    bottom.set(qn('w:color'), '000000')
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+
+    # Build entries dynamically
+    _toc_entry(doc, "Document History", level=0)
+
+    _toc_entry(doc, "1.  Executive Summary", level=0)
+    _toc_entry(doc, "1.1   Confidentiality Notice", level=1)
+    _toc_entry(doc, "1.2   About Operisoft", level=1)
+    _toc_entry(doc, "1.3   About Customer", level=1)
+
+    _toc_entry(doc, "2.  Project Details", level=0)
+    _toc_entry(doc, "2.1   Project Objectives and Overview", level=1)
+    _toc_entry(doc, "2.2   Understanding of Current Landscape", level=1)
+
+    # Section 3 title depends on project type
+    if project_type.strip().upper() == "POC":
+        _toc_entry(doc, "3.  Proposed Solution - POC", level=0)
+    else:
+        _toc_entry(doc, "3.  Proposed Solution", level=0)
+
+    _toc_entry(doc, "3.1   High Level Scope", level=1)
+    _toc_entry(doc, "3.2   Scope of Work", level=1)
+    _toc_entry(doc, "3.3   Key Highlights of the Solution", level=1)
+    _toc_entry(doc, "3.4   Proposed Solution Diagram", level=1)
+
+    if project_type.strip().upper() == "POC":
+        _toc_entry(doc, "3.5   POC Acceptance Criteria", level=1)
+    else:
+        _toc_entry(doc, "3.5   Project Acceptance Criteria", level=1)
+
+    if include_landing_zone:
+        _toc_entry(doc, "3.6   Implementation of Landing Zone", level=1)
+    if include_control_tower:
+        _toc_entry(doc, "3.7   Configuration of Control Tower Setup", level=1)
+    if include_lz_arch:
+        _toc_entry(doc, "3.8   AWS Landing Zone Architecture", level=1)
+    if include_paloalto:
+        _toc_entry(doc, "3.9   PaloAlto Next Generation Firewall", level=1)
+
+    if include_post_deploy:
+        _toc_entry(doc, "4.  Post-Deployment Testing and Acceptance", level=0)
+
+    if include_mgn or include_testing_monitoring:
+        _toc_entry(doc, "4.  Migration Approach", level=0)
+        if include_mgn:
+            _toc_entry(doc, "4.1   Migration of Data Using MGN", level=1)
+        if include_testing_monitoring:
+            _toc_entry(doc, "4.2   Testing and Monitoring", level=1)
+
+    if include_monitoring:
+        _toc_entry(doc, "5.  Monitoring AWS Infrastructure", level=0)
+
+    if include_dr:
+        _toc_entry(doc, "6.  Proposed DR Approach", level=0)
+        _toc_entry(doc, "6.1   Requirement of DR", level=1)
+        _toc_entry(doc, "6.2   AWS Elastic Disaster Recovery for Replication", level=1)
+        _toc_entry(doc, "6.3   AWS DRS Architecture Design", level=1)
+        _toc_entry(doc, "6.4   Proposed DRS Solution", level=1)
+
+    _toc_entry(doc, "5.  Cost Estimate/Commercial Terms", level=0)
+    _toc_entry(doc, "5.1   AWS Total Cost of Ownership [TCO]", level=1)
+    _toc_entry(doc, "5.2   Operisoft Service Charges", level=1)
+    _toc_entry(doc, "5.3   Estimated Timeline", level=1)
+    _toc_entry(doc, "5.4   Assumptions Taken for Cost Calculation", level=1)
+
+    _toc_entry(doc, "6.  AWS Security Best Practices (Suggested)", level=0)
+    _toc_entry(doc, "6.1   AWS Identity and Access Management (IAM)", level=1)
+    _toc_entry(doc, "6.2   AWS IAM Access Analyzer", level=1)
+    _toc_entry(doc, "6.3   Detective Controls", level=1)
+    _toc_entry(doc, "6.4   AWS Detective", level=1)
+    _toc_entry(doc, "6.5   AWS Security Hub", level=1)
+
+    _toc_entry(doc, "7.  Customer Obligations and Engagement Terms", level=0)
+
+    _toc_entry(doc, "8.  Customer Dependencies", level=0)
+
+    _toc_entry(doc, "9.  Assumptions", level=0)
+
+    _toc_entry(doc, "10. Exclusions", level=0)
+
+    _toc_entry(doc, "11. Data Ownership and Customer Offboarding", level=0)
+    _toc_entry(doc, "11.1  Data Ownership", level=1)
+    _toc_entry(doc, "11.2  Offboarding and Data Handover", level=1)
+    _toc_entry(doc, "11.3  Access Deprovisioning", level=1)
+    _toc_entry(doc, "11.4  Transition Support (Optional)", level=1)
+
+    _toc_entry(doc, "12. Commercial Terms and Conditions", level=0)
+
 
 def _set_cell_bg(cell, hex_color: str):
     tc   = cell._tc
@@ -40,38 +285,94 @@ def _set_cell_bg(cell, hex_color: str):
 def _heading(doc, text, level=1, color=None):
     p = doc.add_paragraph()
     p.style = doc.styles["Heading %d" % level] if ("Heading %d" % level) in [s.name for s in doc.styles] else doc.styles["Normal"]
+    p.paragraph_format.space_before = Pt(18)
+    p.paragraph_format.space_after = Pt(8)
     run = p.add_run(text)
     run.bold = True
-    run.font.size = Pt(14 if level == 1 else 12 if level == 2 else 11)
-    run.font.color.rgb = color or DARK
+    run.font.name = "Calibri (Body)"
+    if level == 1:
+        run.font.size = Pt(18)
+        run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+        run.font.small_caps = True
+        # Add bottom border (horizontal line) below main headings
+        pPr = p._p.get_or_add_pPr()
+        pBdr = OxmlElement('w:pBdr')
+        bottom = OxmlElement('w:bottom')
+        bottom.set(qn('w:val'), 'single')
+        bottom.set(qn('w:sz'), '6')
+        bottom.set(qn('w:space'), '1')
+        bottom.set(qn('w:color'), '000000')
+        pBdr.append(bottom)
+        pPr.append(pBdr)
+    else:
+        # Sub-heading: size 14, Blue Accent 1 Darker 25%, with left indent
+        run.font.size = Pt(14)
+        run.font.color.rgb = RGBColor(0x2E, 0x74, 0xB5)  # Blue, Accent 1, Darker 25%
+        p.paragraph_format.left_indent = Cm(0.7)
     return p
 
-def _para(doc, text, bold=False, italic=False, size=10, color=None):
+def _para(doc, text, bold=False, italic=False, size=11, color=None):
     p = doc.add_paragraph()
+    p.paragraph_format.left_indent = Cm(0.7)
     run = p.add_run(text)
     run.bold = bold
     run.italic = italic
+    run.font.name = "Calibri (Body)"
     run.font.size = Pt(size)
     if color:
         run.font.color.rgb = color
     return p
 
-def _bullet(doc, text, size=10):
-    p = doc.add_paragraph(style="List Bullet") if "List Bullet" in [s.name for s in doc.styles] else doc.add_paragraph()
-    p.paragraph_format.left_indent = Inches(0.25)
-    run = p.add_run(("• " if p.style.name != "List Bullet" else "") + text)
+def _bullet(doc, text, size=11):
+    """Add a proper Word bullet point using the List Bullet style."""
+    p = doc.add_paragraph(style="List Bullet")
+    p.paragraph_format.left_indent = Cm(1.4)
+    p.paragraph_format.space_after = Pt(4)
+    run = p.add_run(text)
+    run.font.name = "Calibri (Body)"
     run.font.size = Pt(size)
     return p
 
 def _add_bullets_from_text(doc, text):
-    """Parse bullet text (lines starting with • or -) and add as bullet paras."""
+    """Parse bullet text (lines starting with ➢, •, Ø, or -) and add as bullet paras."""
     for line in text.split("\n"):
         line = line.strip()
         if not line:
             continue
-        line = line.lstrip("•-·").strip()
+        line = line.lstrip("•-·Ø➢").strip()
         if line:
             _bullet(doc, line)
+
+
+def _render_ai_content(doc, text):
+    """Render AI-generated content intelligently — bullets as real Word bullets, rest as paragraphs.
+    Lines starting with ➢, Ø, •, or - become Word bullet points.
+    Lines starting with · (sub-bullet) become indented Word bullets.
+    Other lines become normal paragraphs.
+    """
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+
+        # Detect sub-bullet (·)
+        if line.startswith("·"):
+            clean = line.lstrip("·").strip()
+            if clean:
+                p = doc.add_paragraph(style="List Bullet 2") if "List Bullet 2" in [s.name for s in doc.styles] else doc.add_paragraph(style="List Bullet")
+                p.paragraph_format.left_indent = Cm(2.2)
+                p.paragraph_format.space_after = Pt(2)
+                run = p.add_run(clean)
+                run.font.name = "Calibri (Body)"
+                run.font.size = Pt(11)
+        # Detect top-level bullet (➢, Ø, •, -)
+        elif line[0] in "➢Ø•-" or line.startswith("- "):
+            clean = line.lstrip("➢Ø•-").strip()
+            if clean:
+                _bullet(doc, clean)
+        else:
+            # Regular paragraph text (section labels like "Notes:", "Current Scenario", etc.)
+            _para(doc, line)
 
 def _section_divider(doc):
     doc.add_paragraph()
@@ -203,133 +504,22 @@ SECURITY_HUB_BULLETS = [
     "Creation and Configuration of security events alerts from AWS Detective.",
 ]
 
-PARTNER_DELIVERABLES_BULLETS = [
-    "Inputs provided from the client in any terms will be assumed to be accurate.",
-    "AWS usage and billing will be borne by client during the development as well as at UAT and deployment.",
-    "Necessary approvals and timely review of submissions.",
-    "If a need of any new plugin etc. or any 3rd party service provider needed – will be arranged by client.",
-    "Customer will complete testing of all the deployed AWS services before handover.",
-    "Operisoft will provide consultation for AWS services design and deployment strategies and execute mutually agreed upon new change order.",
-    "Operisoft will not be responsible for any technology or product limitations hindering the service delivery, support or timelines.",
+
+
+
+
+
+
+POST_DEPLOYMENT_BULLETS = [
+    "Following deployment to any designated environment, the Client shall have a maximum of two (2) iterations or fourteen (14) calendar days, whichever occurs first to complete testing and provide written feedback.",
+    "Operisoft will address in-scope issues reported within this period as part of the two iterations. Any requests beyond scope or submitted after this period will require a formal Change Order and may incur additional costs.",
+    "Operisoft shall not be liable for any delays, rework, or impacts resulting from feedback, defects, or change requests that are submitted outside the defined timeline or that fall outside the agreed scope of work.",
+    "If no feedback is received within the specified period, or all reported issues are resolved within the allowed iterations, the deployment shall be deemed accepted.",
 ]
 
-CUSTOMER_DEPS_BULLETS = [
-    "The customer team will provide the details of network architecture and application dependencies.",
-    "Availability of the key/right stakeholders will be assured for defined activities MRA/Discovery Session.",
-    "Data migration is the key to success for this project and it is largely dependent on adequate network bandwidth availability. The customer will have to ensure the availability of sufficient network bandwidth at the source data centre.",
-    "Bandwidth requirements will be mutually agreed upon during the initial phase of the feasibility of migration methodology.",
-    "All application-level configuration changes to be done by the customer in-house team and AWS PARTNER will provide support related to AWS-specific configurations.",
-    "All third-party tools and services will be migrated as-is from the current data centre.",
-    "Licenses for all applications and third-party tools will be provided by the customer.",
-    "Installation of agents for application migration service will be done by the customer's IT team.",
-    "Any changes required in application code/configuration or database configuration will be done by the customer's Team.",
-    "The customer team has to share the Applications dependencies along with compatibility with Operating System licenses etc.",
-    "Providing access control details for IAM, S3, Security Groups as per business requirement.",
-    "Customer needs to align their IT and network teams for setting up the network architecture between AWS and their on-premises environment.",
-]
 
-ASSUMPTIONS_BULLETS = [
-    "A single point of contact will be assigned from the customer team end for coordination and providing the required information, access, approvals, and sign-off.",
-    "All required information and approvals from the customer team will be provided within 3 working days.",
-    "The customer will provide the complete know-how on the application deployment architecture, access, and data flows to Operisoft team.",
-    "The customer will provide required access to their environments for assessment for AWS migration.",
-    "Account structure and network architecture will be finalized with customer's IT teams.",
-    "Compute sizing is designed based on the utilization report and existing server configuration.",
-    "Inputs provided from the client in any terms will be assumed to be accurate.",
-    "AWS usage and billing will be borne by client during the development as well as at UAT and deployment.",
-    "Necessary approvals and timely review of submissions.",
-    "Customer will complete testing of all the deployed AWS services before handover.",
-    "Operisoft will not be responsible for any technology or product limitations hindering the service delivery, support or timelines.",
-    "Operisoft's timely and adequate performance of the services shall depend upon full access to appropriate customer personnel and information.",
-    "In case of sudden spikes in volumes due to unforeseen circumstances, the support will be on a best effort basis.",
-    "All the organizational or technical changes which may affect any services will be communicated in writing to Operisoft at least 1 week prior to changes.",
-    "We assume for business-critical applications necessary HA architecture in place to meet the requirements.",
-    "Unauthorized changes: In the event of unauthorized changes in AWS infrastructure, Operisoft reserves rights to refuse support.",
-]
 
-EXCLUSIONS_BULLETS = [
-    "Security configurations and settings outside of the AWS environment will not be part of the scope.",
-    "Security configuration of Existing environment or in the corporate network environment.",
-    "Any change in OS, application, or third-party tool/service configuration.",
-    "Changes in application code or configuration in the application.",
-    "3rd party App Integrations is not included in this scope.",
-    "Any activities related to modernization will be done after the migration phase.",
-    "Any new cloud solution build and deployment requirement including but not limited to application modernization will be a separate engagement.",
-    "Any change in the current On-Premises environment.",
-    "Application testing.",
-]
 
-RISK_TABLE_DATA = [
-    ("1", "The large size of the database may cause longer downtime", "Test the feasibility of database migration with all available options."),
-    ("2", "As the project involves migration to the cloud along with changes in the application configuration and architecture might be required", "This would require higher involvement of the application team."),
-    ("3", "Network bandwidth constraint in uploading data/server replication", "The client team will ensure enough bandwidth for migration activity."),
-    ("4", "Availability of resources and teams", "Stand-by team will be employed for the project activities."),
-    ("5", "Coordination among multiple teams", "SPOC will be identified from each team for the project activity."),
-    ("6", "Non-availability of information", "Checklists will be prepared for all required information."),
-    ("7", "Delay in approvals and sign-off", "Regular reviews will be done to check the status of the project tasks."),
-]
-
-PROJECT_PLAN_TASKS = [
-    ("1", "Contract Sign Off"),
-    ("", "Project Initiation / Requirement Gathering"),
-    ("2", "Finalization of ownership of activities between Operisoft and the Customer"),
-    ("3", "Prepare and share Detailed Project Plan"),
-    ("4", "Coordination with application team for Knowledge Transfer"),
-    ("5", "Create New AWS Account for the Customer"),
-    ("6", "Sign off on Documentation by the Customer"),
-    ("", "Setting up Landing Zone"),
-    ("7", "Create AWS Control Tower and Landing zone (Master, Security and Log Accounts)"),
-    ("8", "Create AWS account and network design"),
-    ("9", "Create OU for Network and Shared services account"),
-    ("10", "Configure Network design review and Access control"),
-    ("11", "Creation of Network, shared services, Prod and Dev/test workloads"),
-    ("12", "Setting up the control tower and preparation of Cloud Formation template for Network"),
-    ("13", "AWS Account Setup"),
-    ("", "Data Migration"),
-    ("14", "Setup MGN Service for Data Migration"),
-    ("15", "Migrate the data from existing Datacenter site to proposed AWS Cloud"),
-    ("16", "Test data integrity and validate data consistency"),
-    ("", "Setup Development Environment"),
-    ("17", "Set up VPC, Subnets, NACLs, NAT Gateway and Security Groups"),
-    ("18", "Deploy Application EC2 instances in private subnet as per shared sizing"),
-    ("19", "Set up an Application Load Balancer in the private subnet"),
-    ("20", "Deploy Database EC2 instances in Private subnet"),
-    ("21", "Test Application Functionality"),
-    ("", "Setup UAT Environment"),
-    ("22", "Set up VPC, Subnets, NACLs, NAT Gateway and Security Groups"),
-    ("23", "Deploy Application EC2 instances in private subnet as per shared sizing"),
-    ("24", "Set up an Application Load Balancer in the private subnet"),
-    ("25", "Deploy Database EC2 instances in Private subnet"),
-    ("26", "Test Application Functionality"),
-    ("", "Setup Production Environment"),
-    ("27", "Set up VPC, Subnets, NACLs, NAT Gateway and Security Groups"),
-    ("28", "Deploy EC2 instances in private subnet in multi-AZ Mode"),
-    ("29", "Set up an Application Load Balancer in the private subnet"),
-    ("30", "Deploy Database EC2 instances in Private subnet"),
-    ("31", "Test Application Functionality"),
-    ("", "Setup Disaster Recovery"),
-    ("32", "Set up VPC, Subnets, NACLs, NAT Gateway and Security Groups"),
-    ("33", "Set up AWS DRS Service to replicate Application and Database Servers to DR region"),
-    ("34", "Test Replication and DR Setup"),
-    ("", "Implementation & Review Of AWS Best Security Practices"),
-    ("35", "Configuration of Password policy in IAM in all accounts"),
-    ("36", "Setup AWS Route53 and update DNS records"),
-    ("37", "Setup and configuration of AWS backup snapshot policies"),
-    ("38", "Setup File System and database level Backup"),
-    ("39", "Enable CloudTrail to keep a track of account level activities"),
-    ("40", "Configure CloudWatch dashboards along with alerts"),
-    ("41", "Configure AWS GuardDuty to detect threats and generate alerts"),
-    ("42", "Configure AWS Security HUB"),
-    ("43", "AWS KMS setup for data encryption"),
-    ("44", "Install Antivirus"),
-    ("45", "Setup Palo Alto Firewall"),
-    ("46", "Setup AWS WAF"),
-    ("47", "Setup AWS Inspector"),
-    ("", "Testing, Validation and Support"),
-    ("48", "Handover of Document and SOP post implementation of setup"),
-    ("49", "Testing of and troubleshooting of application functionality on the Production Site"),
-    ("50", "Validation & Sign-Off by the Customer"),
-]
 
 COMMERCIAL_TERMS = """i. Offer Validity: Upto 30 days.
 
@@ -430,11 +620,19 @@ def generate_sow_document(data: dict) -> str:
     customer_name         = data.get("customer_name", "Customer")
     mom_text              = data.get("mom_text", "")
     company_url           = data.get("company_url", "")
+    project_type          = data.get("project_type", "POC")   # "POC" or "Production"
+    doc_date              = data.get("doc_date", "")
+    submitted_by          = data.get("submitted_by", "")
+    client_logo_path      = data.get("client_logo_path", None)
     include_landing_zone  = data.get("include_landing_zone", False)
     include_control_tower = data.get("include_control_tower", False)
     include_lz_arch       = data.get("include_landing_zone_arch", False)
     include_paloalto      = data.get("include_paloalto", False)
     include_mgn           = data.get("include_mgn_migration", False)
+    include_post_deploy   = data.get("include_post_deployment", False)
+    include_testing_monitoring = data.get("include_testing_monitoring", False)
+    include_monitoring    = data.get("include_monitoring", False)
+    include_dr            = data.get("include_dr", False)
 
     # Extract company info from URL if provided
     company_about_us = ""
@@ -448,52 +646,94 @@ def generate_sow_document(data: dict) -> str:
 
     # Generate dynamic content via Bedrock (credentials loaded from .env)
     about_customer      = generate_about_customer(customer_name, mom_text, company_about_us)
-    proj_objectives     = generate_project_objectives(customer_name, mom_text)
+    proj_objectives     = generate_project_objectives(customer_name, mom_text, project_type)
     current_landscape   = generate_current_landscape(customer_name, mom_text)
     key_highlights      = generate_key_highlights(customer_name, mom_text)
     dr_reqs             = generate_dr_requirements(customer_name, mom_text)
     proposed_drs        = generate_proposed_drs_solution(customer_name, mom_text)
-    tco_assumptions     = generate_tco_assumptions(customer_name, mom_text)
     high_level_scope    = generate_high_level_scope(customer_name, mom_text)
-    scope_of_work       = generate_scope_of_work(customer_name, mom_text)
-    acceptance_criteria = generate_acceptance_criteria(customer_name, mom_text)
+    scope_of_work       = generate_scope_of_work(customer_name, mom_text, project_type)
+    acceptance_criteria = generate_acceptance_criteria(customer_name, mom_text, project_type)
+    customer_obligations = generate_customer_obligations(customer_name, mom_text)
+    customer_dependencies = generate_customer_dependencies(customer_name, mom_text)
+    assumptions = generate_assumptions(customer_name, mom_text)
+    exclusions = generate_exclusions(customer_name, mom_text)
 
     # Build real AWS Pricing Calculator estimate via MCP
     pricing             = build_pricing_estimate(customer_name, mom_text, key_highlights)
 
+    # Pass cost_summary to tco_assumptions so Bedrock generates service-specific assumptions
+    cost_summary        = pricing.get("cost_summary", "")
+    tco_assumptions     = generate_tco_assumptions(customer_name, mom_text, cost_summary)
+
     doc = Document()
+
+    # ── Set document-wide font defaults ──
+    _set_document_defaults(doc)
 
     # ── Page margins ──
     for section in doc.sections:
-        section.top_margin    = Cm(2)
-        section.bottom_margin = Cm(2)
-        section.left_margin   = Cm(2.5)
-        section.right_margin  = Cm(2.5)
+        section.top_margin    = Cm(1.27)
+        section.bottom_margin = Cm(1.27)
+        section.left_margin   = Cm(1.27)
+        section.right_margin  = Cm(1.27)
+        section.footer_distance = Cm(1.27)
+
+    # ── Header and Footer ──
+    _add_header_footer(doc, customer_name)
 
     # ── Cover Page ────────────────────────────────────────────────────────
     doc.add_paragraph()
+
     title_p = doc.add_paragraph()
     title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = title_p.add_run("Proposal for AWS Cloud Services")
-    run.bold = True
+    run.bold = False
+    run.font.name = FONT_NAME
     run.font.size = Pt(22)
     run.font.color.rgb = DARK
 
     doc.add_paragraph()
+
     for_p = doc.add_paragraph()
     for_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for_p.add_run("For").font.size = Pt(14)
+    for_run = for_p.add_run("For")
+    for_run.font.name = FONT_NAME
+    for_run.font.size = Pt(12)
+    for_run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
     doc.add_paragraph()
-    cust_p = doc.add_paragraph()
-    cust_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run2 = cust_p.add_run(customer_name)
-    run2.bold = True
-    run2.font.size = Pt(18)
-    run2.font.color.rgb = ORANGE
+
+    # ── Client Logo (centered) ──
+    if client_logo_path and os.path.exists(client_logo_path):
+        logo_p = doc.add_paragraph()
+        logo_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_logo = logo_p.add_run()
+        run_logo.add_picture(client_logo_path, width=Inches(2.5))
+    else:
+        # If no logo uploaded, show customer name in its place
+        cust_p = doc.add_paragraph()
+        cust_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run2 = cust_p.add_run(customer_name)
+        run2.bold = True
+        run2.font.name = FONT_NAME
+        run2.font.size = Pt(20)
+        run2.font.color.rgb = ORANGE
 
     doc.add_paragraph()
     doc.add_paragraph()
+    doc.add_paragraph()
+    doc.add_paragraph()
+
+    # ── Document History heading ──
+    dh_heading = doc.add_paragraph()
+    run_dh = dh_heading.add_run("Document History")
+    run_dh.bold = True
+    run_dh.font.name = "Calibri (Body)"
+    run_dh.font.size = Pt(18)
+    run_dh.font.color.rgb = DARK
+    # Small caps effect via caps
+    run_dh.font.small_caps = True
 
     # Document History table
     hist_table = doc.add_table(rows=2, cols=3)
@@ -503,11 +743,46 @@ def generate_sow_document(data: dict) -> str:
         cell = hist_table.rows[0].cells[i]
         cell.text = h
         cell.paragraphs[0].runs[0].bold = True
+        cell.paragraphs[0].runs[0].font.name = "Calibri (Body)"
+        cell.paragraphs[0].runs[0].font.size = Pt(11)
         _set_cell_bg(cell, "1F2763")
         cell.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
     hist_table.rows[1].cells[0].text = "1.0"
-    hist_table.rows[1].cells[1].text = "Date"
-    hist_table.rows[1].cells[2].text = "Operisoft Technologies"
+    hist_table.rows[1].cells[1].text = doc_date if doc_date else "Date"
+    hist_table.rows[1].cells[2].text = submitted_by if submitted_by else "Operisoft Technologies"
+    # Set font for data row
+    for i in range(3):
+        for para in hist_table.rows[1].cells[i].paragraphs:
+            for run in para.runs:
+                run.font.name = "Calibri (Body)"
+                run.font.size = Pt(11)
+
+    doc.add_paragraph()
+    doc.add_paragraph()
+
+    # ── Operisoft Logo (static, centered at bottom of cover page) ──
+    operisoft_logo_path = os.path.join(os.path.dirname(__file__), "OperisoftLogo.png")
+    if os.path.exists(operisoft_logo_path):
+        opi_logo_p = doc.add_paragraph()
+        opi_logo_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_opi = opi_logo_p.add_run()
+        run_opi.add_picture(operisoft_logo_path, width=Inches(2.0))
+    else:
+        # Fallback: styled text if logo image not available
+        opi_p = doc.add_paragraph()
+        opi_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_opi_text = opi_p.add_run("Operisoft.")
+        run_opi_text.bold = True
+        run_opi_text.font.name = FONT_NAME
+        run_opi_text.font.size = Pt(26)
+        run_opi_text.font.color.rgb = DARK
+
+    doc.add_page_break()
+
+    # ── Table of Contents (Page 2) ───────────────────────────────────────
+    _build_toc(doc, project_type, include_post_deploy, include_landing_zone,
+               include_control_tower, include_lz_arch, include_paloalto,
+               include_mgn, include_testing_monitoring, include_monitoring, include_dr)
 
     doc.add_page_break()
 
@@ -531,39 +806,47 @@ def generate_sow_document(data: dict) -> str:
     _heading(doc, "2. Project Details", 1, DARK)
 
     _heading(doc, "2.1 Project Objectives and Overview", 2, ORANGE)
-    for para in proj_objectives.split("\n\n"):
-        if para.strip():
-            _para(doc, para.strip())
+    _render_ai_content(doc, proj_objectives)
     _section_divider(doc)
 
     _heading(doc, "2.2 Understanding of Current Landscape", 2, ORANGE)
-    for para in current_landscape.split("\n\n"):
-        if para.strip():
-            _para(doc, para.strip())
+    _render_ai_content(doc, current_landscape)
     _section_divider(doc)
 
     # ── 3. Proposed Solution ──────────────────────────────────────────────
     _heading(doc, "3. Proposed Solution", 1, DARK)
 
     _heading(doc, "3.1 High Level Scope", 2, ORANGE)
-    _para(doc, high_level_scope)
+    _render_ai_content(doc, high_level_scope)
     _section_divider(doc)
 
     _heading(doc, "3.2 Scope of Work", 2, ORANGE)
-    _para(doc, scope_of_work)
+    _render_ai_content(doc, scope_of_work)
     _section_divider(doc)
 
     _heading(doc, "3.3 Key Highlights of the Solution", 2, ORANGE)
-    _add_bullets_from_text(doc, key_highlights)
+    _render_ai_content(doc, key_highlights)
     _section_divider(doc)
 
-    _heading(doc, "3.4 Acceptance Criteria", 2, ORANGE)
-    _para(doc, acceptance_criteria)
-    _section_divider(doc)
-
-    _heading(doc, "3.5 Proposed Solution Diagram", 2, ORANGE)
+    _heading(doc, "3.4 Proposed Solution Diagram", 2, ORANGE)
     _para(doc, "[Proposed Solution Architecture Diagram – Please insert diagram here]", italic=True, color=RGBColor(0x99, 0x99, 0x99))
     _section_divider(doc)
+
+    # 3.5 heading is conditional on project type
+    if project_type.strip().upper() == "POC":
+        ac_heading = "3.5 POC Acceptance Criteria"
+    else:
+        ac_heading = "3.5 Project Acceptance Criteria"
+    _heading(doc, ac_heading, 2, ORANGE)
+    _render_ai_content(doc, acceptance_criteria)
+    _section_divider(doc)
+
+    # Optional: 4. Post-Deployment Testing and Acceptance
+    if include_post_deploy:
+        _heading(doc, "4. Post-Deployment Testing and Acceptance", 1, DARK)
+        for b in POST_DEPLOYMENT_BULLETS:
+            _bullet(doc, b)
+        _section_divider(doc)
 
     # Optional sections 3.6, 3.7, 3.8, 3.9
     sec_num = 6
@@ -642,59 +925,64 @@ def generate_sow_document(data: dict) -> str:
             _bullet(doc, b)
         _section_divider(doc)
 
-    # ── 4/5. Migration Approach ───────────────────────────────────────────
-    _heading(doc, "4. Migration Approach", 1, DARK)
+    # ── Migration Approach ───────────────────────────────────────────
+    if include_mgn or include_testing_monitoring:
+        _heading(doc, "4. Migration Approach", 1, DARK)
 
-    if include_mgn:
-        _heading(doc, "4.1 Migration of Data Using MGN", 2, ORANGE)
-        for b in MGN_BULLETS:
+        if include_mgn:
+            _heading(doc, "4.1 Migration of Data Using MGN", 2, ORANGE)
+            for b in MGN_BULLETS:
+                _bullet(doc, b)
+            _section_divider(doc)
+
+        if include_testing_monitoring:
+            _heading(doc, "4.2 Testing and Monitoring", 2, ORANGE)
+            for t in TESTING_MONITORING_TEXT:
+                _bullet(doc, t)
+            _section_divider(doc)
+
+    # ── Monitoring ───────────────────────────────────────────────────────
+    if include_monitoring:
+        _heading(doc, "5. Monitoring AWS Infrastructure", 1, DARK)
+        for b in MONITORING_INFRA_BULLETS:
             _bullet(doc, b)
         _section_divider(doc)
 
-    _heading(doc, "4.2 Testing and Monitoring", 2, ORANGE)
-    for t in TESTING_MONITORING_TEXT:
-        _bullet(doc, t)
-    _section_divider(doc)
+    # ── DR ───────────────────────────────────────────────────────────────
+    if include_dr:
+        _heading(doc, "6. Proposed DR Approach", 1, DARK)
 
-    # ── 5/6. Monitoring ───────────────────────────────────────────────────
-    _heading(doc, "5. Monitoring AWS Infrastructure", 1, DARK)
-    for b in MONITORING_INFRA_BULLETS:
-        _bullet(doc, b)
-    _section_divider(doc)
+        _heading(doc, "6.1 Requirement of DR", 2, ORANGE)
+        dr_rows = [
+            ("Identify Critical Systems", str(dr_reqs.get("critical_systems", "All production systems"))),
+            ("Primary Site Location",     str(dr_reqs.get("primary_site", "Mumbai Region"))),
+            ("Type of DR",                str(dr_reqs.get("dr_type", "Passive"))),
+            ("Expected RTO",              str(dr_reqs.get("rto", "30 minutes"))),
+            ("Expected RPO",              str(dr_reqs.get("rpo", "15 minutes"))),
+        ]
+        _two_col_table(doc, dr_rows)
+        _section_divider(doc)
 
-    # ── 6/7. DR ───────────────────────────────────────────────────────────
-    _heading(doc, "6. Proposed DR Approach", 1, DARK)
+        _heading(doc, "6.2 AWS Elastic Disaster Recovery for Replication", 2, ORANGE)
+        for para in EDR_TEXT.split("\n\n"):
+            _para(doc, para.strip())
+        _section_divider(doc)
 
-    _heading(doc, "6.1 Requirement of DR", 2, ORANGE)
-    dr_rows = [
-        ("Identify Critical Systems", str(dr_reqs.get("critical_systems", "All production systems"))),
-        ("Primary Site Location",     str(dr_reqs.get("primary_site", "Mumbai Region"))),
-        ("Type of DR",                str(dr_reqs.get("dr_type", "Passive"))),
-        ("Expected RTO",              str(dr_reqs.get("rto", "30 minutes"))),
-        ("Expected RPO",              str(dr_reqs.get("rpo", "15 minutes"))),
-    ]
-    _two_col_table(doc, dr_rows)
-    _section_divider(doc)
+        _heading(doc, "6.3 AWS DRS Architecture Design", 2, ORANGE)
+        _para(doc, "[AWS DRS Architecture Diagram – Please insert diagram here]", italic=True, color=RGBColor(0x99, 0x99, 0x99))
+        for b in DRS_ARCH_BULLETS:
+            _bullet(doc, b)
+        _section_divider(doc)
 
-    _heading(doc, "6.2 AWS Elastic Disaster Recovery for Replication", 2, ORANGE)
-    for para in EDR_TEXT.split("\n\n"):
-        _para(doc, para.strip())
-    _section_divider(doc)
+        _heading(doc, "6.4 Proposed DRS Solution", 2, ORANGE)
+        _render_ai_content(doc, proposed_drs)
+        _section_divider(doc)
 
-    _heading(doc, "6.3 AWS DRS Architecture Design", 2, ORANGE)
-    _para(doc, "[AWS DRS Architecture Diagram – Please insert diagram here]", italic=True, color=RGBColor(0x99, 0x99, 0x99))
-    for b in DRS_ARCH_BULLETS:
-        _bullet(doc, b)
-    _section_divider(doc)
+    # ── 5. Cost Estimate / Commercial Terms ──────────────────────────────
+    _heading(doc, "5. Cost Estimate / Commercial Terms", 1, DARK)
 
-    _heading(doc, "6.4 Proposed DRS Solution", 2, ORANGE)
-    _add_bullets_from_text(doc, proposed_drs)
-    _section_divider(doc)
-
-    # ── 7. Cost Estimate ──────────────────────────────────────────────────
-    _heading(doc, "7. Cost Estimate / Commercial Terms", 1, DARK)
-
-    _heading(doc, "7.1 AWS Total Cost of Ownership [TCO]", 2, ORANGE)
+    # 5.1 AWS TCO
+    _heading(doc, "5.1 AWS Total Cost of Ownership [TCO]", 2, ORANGE)
 
     calc_url = pricing.get("url", "https://calculator.aws/pricing/2/estimate")
 
@@ -712,14 +1000,15 @@ def generate_sow_document(data: dict) -> str:
 
     _section_divider(doc)
 
-    _heading(doc, "7.2 Operisoft Service Charges", 2, ORANGE)
+    # 5.2 Operisoft Service Charges
+    _heading(doc, "5.2 Operisoft Service Charges", 2, ORANGE)
+    svc_table = doc.add_table(rows=3, cols=2)
+    svc_table.style = "Table Grid"
     cost_rows = [
         ("Cost Component", "Cost in INR"),
         ("OTC [One Time Charges]", ""),
         ("Retainership cost [Recurring Managed services]", ""),
     ]
-    svc_table = doc.add_table(rows=3, cols=2)
-    svc_table.style = "Table Grid"
     for i, (k, v) in enumerate(cost_rows):
         svc_table.rows[i].cells[0].text = k
         svc_table.rows[i].cells[1].text = v
@@ -729,158 +1018,289 @@ def generate_sow_document(data: dict) -> str:
     _para(doc, "GST Extra as applicable", italic=True)
     _section_divider(doc)
 
-    _heading(doc, "7.3 Assumptions Taken for Cost Calculation", 2, ORANGE)
-    _add_bullets_from_text(doc, tco_assumptions)
+    # 5.3 Estimated Timeline
+    _heading(doc, "5.3 Estimated Timeline", 2, ORANGE)
+    _bullet(doc, "4 Weeks Development.")
+    _bullet(doc, "1 Week UAT.")
     _section_divider(doc)
 
-    # ── 8. Security Best Practices ────────────────────────────────────────
-    _heading(doc, "8. AWS Security Best Practices", 1, DARK)
-    sec_links = [
-        "Best Practices for AWS root users: https://docs.aws.amazon.com/accounts/latest/reference/best-practices-root-user.html",
-        "Best Practices for AWS Access Keys: https://docs.aws.amazon.com/accounts/latest/reference/credentials-access-keys-best-practices.html",
-        "Shared Responsibility Model: https://aws.amazon.com/compliance/shared-responsibility-model/",
-        "AWS CloudTrail: https://aws.amazon.com/cloudtrail/",
-        "Trusted Advisor: https://aws.amazon.com/premiumsupport/trustedadvisor/",
-        "Enable MFA: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa.html",
-    ]
-    for b in sec_links:
-        _bullet(doc, b)
+    # 5.4 Assumptions Taken for Cost Calculation (Bedrock — driven by TCO services)
+    _heading(doc, "5.4 Assumptions Taken for Cost Calculation", 2, ORANGE)
+    _render_ai_content(doc, tco_assumptions)
     _section_divider(doc)
 
-    _heading(doc, "8.1 AWS Identity and Access Management (IAM)", 2, ORANGE)
-    for b in IAM_BULLETS:
-        _bullet(doc, b)
+    # ── 6. Customer Obligations and Engagement Terms ────────────────────
+    _heading(doc, "6. Customer Obligations and Engagement Terms", 1, DARK)
+    _render_ai_content(doc, customer_obligations)
     _section_divider(doc)
 
-    _heading(doc, "8.2 AWS IAM Access Analyzer", 2, ORANGE)
-    for b in IAM_ANALYZER_BULLETS:
-        _bullet(doc, b)
+    # ── 7. Customer Dependencies ──────────────────────────────────────────
+    _heading(doc, "7. Customer Dependencies", 1, DARK)
+    _render_ai_content(doc, customer_dependencies)
     _section_divider(doc)
 
-    _heading(doc, "8.3 Detective Controls", 2, ORANGE)
-    for b in DETECTIVE_CONTROLS_BULLETS:
-        _bullet(doc, b)
+    # ── 8. Assumptions ────────────────────────────────────────────────────
+    _heading(doc, "8. Assumptions", 1, DARK)
+    _render_ai_content(doc, assumptions)
     _section_divider(doc)
 
-    _heading(doc, "8.4 AWS Detective", 2, ORANGE)
-    for b in AWS_DETECTIVE_BULLETS:
-        _bullet(doc, b)
+    # ── 9. Exclusions ─────────────────────────────────────────────────────
+    _heading(doc, "9. Exclusions", 1, DARK)
+    _render_ai_content(doc, exclusions)
     _section_divider(doc)
 
-    _heading(doc, "8.5 AWS Security Hub", 2, ORANGE)
-    for b in SECURITY_HUB_BULLETS:
-        _bullet(doc, b)
-    _section_divider(doc)
+    # ── 10. Commercial Terms — always starts on a new page ──────────────
+    doc.add_page_break()
+    _heading(doc, "10  Commercial Terms and Conditions", 1, DARK)
 
-    # ── 9. Partner Deliverables ───────────────────────────────────────────
-    _heading(doc, "9. AWS Partner Deliverables", 1, DARK)
-    for b in PARTNER_DELIVERABLES_BULLETS:
-        _bullet(doc, b)
-    _section_divider(doc)
-
-    # ── 10. Customer Dependencies ─────────────────────────────────────────
-    _heading(doc, "10. Customer Dependencies", 1, DARK)
-    for b in CUSTOMER_DEPS_BULLETS:
-        _bullet(doc, b)
-    _section_divider(doc)
-
-    # ── 11. Assumptions ───────────────────────────────────────────────────
-    _heading(doc, "11. Assumptions", 1, DARK)
-    for b in ASSUMPTIONS_BULLETS:
-        _bullet(doc, b)
-    _section_divider(doc)
-
-    # ── 12. Exclusions ────────────────────────────────────────────────────
-    _heading(doc, "12. Exclusions", 1, DARK)
-    for b in EXCLUSIONS_BULLETS:
-        _bullet(doc, b)
-    _section_divider(doc)
-
-    # ── 13. Risk Analysis ─────────────────────────────────────────────────
-    _heading(doc, "13. Risk Analysis", 1, DARK)
-    risk_table = doc.add_table(rows=1 + len(RISK_TABLE_DATA), cols=3)
-    risk_table.style = "Table Grid"
-    for i, h in enumerate(["S. No.", "Risk", "Proposed Mitigation"]):
-        cell = risk_table.rows[0].cells[i]
-        cell.text = h
-        cell.paragraphs[0].runs[0].bold = True
-        _set_cell_bg(cell, "1F2763")
-        cell.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-    for idx, (sno, risk, mit) in enumerate(RISK_TABLE_DATA):
-        row = risk_table.rows[idx + 1]
-        row.cells[0].text = sno
-        row.cells[1].text = risk
-        row.cells[2].text = mit
-    _section_divider(doc)
-
-    # ── 14. Project Plan ──────────────────────────────────────────────────
-    _heading(doc, "14. Project Plan", 1, DARK)
-    pp_table = doc.add_table(rows=1 + len(PROJECT_PLAN_TASKS), cols=6)
-    pp_table.style = "Table Grid"
-    for i, h in enumerate(["S.No", "Activities / Milestones", "Month 01", "Month 02", "Month 03", "Month 04"]):
-        cell = pp_table.rows[0].cells[i]
-        cell.text = h
-        cell.paragraphs[0].runs[0].bold = True
-        _set_cell_bg(cell, "1F2763")
-        cell.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-    for idx, (sno, activity) in enumerate(PROJECT_PLAN_TASKS):
-        row = pp_table.rows[idx + 1]
-        row.cells[0].text = sno
-        row.cells[1].text = activity
-        if not sno:  # section header row
-            _set_cell_bg(row.cells[1], "F2F2F2")
-            if row.cells[1].paragraphs[0].runs:
-                row.cells[1].paragraphs[0].runs[0].bold = True
-    _section_divider(doc)
-
-    # ── 15. Commercial Terms ──────────────────────────────────────────────
-    _heading(doc, "15. Commercial Terms and Conditions", 1, DARK)
-    for line in COMMERCIAL_TERMS.split("\n"):
+    # Helper for roman numeral items (i, ii, iii, etc.)
+    def _roman_item(doc, label, bold_text, normal_text=""):
         p = doc.add_paragraph()
-        p.add_run(line).font.size = Pt(10)
+        p.paragraph_format.left_indent = Cm(1.5)
+        p.paragraph_format.first_line_indent = Cm(-1.5)
+        p.paragraph_format.space_before = Pt(10)
+        p.paragraph_format.space_after = Pt(4)
+        run_label = p.add_run(f"{label}.\t")
+        run_label.font.name = "Calibri (Body)"
+        run_label.font.size = Pt(11)
+        run_bold = p.add_run(bold_text)
+        run_bold.bold = True
+        run_bold.font.name = "Calibri (Body)"
+        run_bold.font.size = Pt(11)
+        if normal_text:
+            run_norm = p.add_run(normal_text)
+            run_norm.font.name = "Calibri (Body)"
+            run_norm.font.size = Pt(11)
+        return p
 
+    def _sub_item(doc, label, text, bold_part=""):
+        p = doc.add_paragraph()
+        p.paragraph_format.left_indent = Cm(3.0)
+        p.paragraph_format.first_line_indent = Cm(-0.8)
+        p.paragraph_format.space_after = Pt(2)
+        run_label = p.add_run(f"{label}.\t")
+        run_label.font.name = "Calibri (Body)"
+        run_label.font.size = Pt(11)
+        if bold_part:
+            run_b = p.add_run(bold_part)
+            run_b.bold = True
+            run_b.font.name = "Calibri (Body)"
+            run_b.font.size = Pt(11)
+        run_text = p.add_run(text)
+        run_text.font.name = "Calibri (Body)"
+        run_text.font.size = Pt(11)
+        return p
+
+    def _indented_line(doc, text, indent=3.0, bold=False):
+        p = doc.add_paragraph()
+        p.paragraph_format.left_indent = Cm(indent)
+        p.paragraph_format.space_after = Pt(2)
+        run = p.add_run(text)
+        run.font.name = "Calibri (Body)"
+        run.font.size = Pt(11)
+        run.bold = bold
+        return p
+
+    # i. Offer Validity
+    _roman_item(doc, "i", "Offer Validity: ", "Upto 30 days.")
+
+    # ii. Payment Term
+    _roman_item(doc, "ii", "Payment Term:")
+    _sub_item(doc, "a", "Implementation: 100% advance unless explicitly mentioned.", "")
+    _sub_item(doc, "b", "Managed Services/AWS Bills: 15 days after Invoice generation.", "")
+
+    # iii. Taxes
+    _roman_item(doc, "iii", "Taxes: ", "Extra @ 18% IGST/CGST+SGST in case of INR billing")
+
+    # iv. SAC/HSN
+    _roman_item(doc, "iv", "SAC/HSN:")
+    _sub_item(doc, "a", " Cloud consumption & services", "998315")
+    _sub_item(doc, "b", " Software", "997331")
+
+    # v. Billing Cycle
+    _roman_item(doc, "v", "Billing Cycle:")
+    p_bill = doc.add_paragraph(style="List Bullet")
+    p_bill.paragraph_format.left_indent = Cm(3.0)
+    p_bill.paragraph_format.space_after = Pt(4)
+    run_bill = p_bill.add_run("Monthly invoices are generated from 5th to 15th of the next month. And must be paid within ")
+    run_bill.font.name = "Calibri (Body)"
+    run_bill.font.size = Pt(11)
+    run_bill_bold = p_bill.add_run("15 days")
+    run_bill_bold.bold = True
+    run_bill_bold.font.name = "Calibri (Body)"
+    run_bill_bold.font.size = Pt(11)
+    run_bill2 = p_bill.add_run(" to avoid stopping the services.")
+    run_bill2.font.name = "Calibri (Body)"
+    run_bill2.font.size = Pt(11)
+
+    # vi. Order to be placed on
+    _roman_item(doc, "vi", "Order to be placed on:")
+    _indented_line(doc, "OPERISOFT TECHNOLOGIES PRIVATE LIMITED", indent=3.0)
+    _indented_line(doc, "Office No 301, Plot No 273, Zion Complex Building", indent=3.0)
+    _indented_line(doc, "Sector-10, Kharghar, Navi Mumbai \u2013 410210", indent=3.0)
+
+    # vii. Mode of Payment
+    _roman_item(doc, "vii", "Mode of Payment")
     doc.add_paragraph()
+    _indented_line(doc, "By Wire Transfer/NEFT:", indent=2.0, bold=True)
 
-    # Payment table
-    pay_table = doc.add_table(rows=6, cols=2)
-    pay_table.style = "Table Grid"
+    # Payment details as tabbed lines (not table)
     pay_data = [
         ("Beneficiary Name", "OPERISOFT TECHNOLOGIES PVT LTD"),
-        ("Bank Name & Address", "Yes BANK, Vashi Branch, Navi Mumbai"),
-        ("Bank A/c No.", "073838389703"),
+        ("Bank Name & Add", "ICICI BANK, Vashi Branch, Navi Mumbai"),
+        ("Bank A/c No.", "015105019803"),
         ("Account Type", "Current Account"),
-        ("IFSC/IMPS/RTGS CODE", "IC7830151"),
-        ("SWIFT CODE", "I7j9fifINBBCTS"),
+        ("IFSC/IMPS/RTGS CODE", "ICIC0000151"),
+        ("SWIFT CODE", "ICICINBBCTS"),
     ]
-    for i, (k, v) in enumerate(pay_data):
-        pay_table.rows[i].cells[0].text = k
-        pay_table.rows[i].cells[0].paragraphs[0].runs[0].bold = True
-        pay_table.rows[i].cells[1].text = v
+    for label, value in pay_data:
+        p = doc.add_paragraph()
+        p.paragraph_format.left_indent = Cm(3.0)
+        p.paragraph_format.space_after = Pt(2)
+        run_l = p.add_run(f"{label}\t")
+        run_l.bold = True
+        run_l.font.name = "Calibri (Body)"
+        run_l.font.size = Pt(11)
+        run_v = p.add_run(value)
+        run_v.font.name = "Calibri (Body)"
+        run_v.font.size = Pt(11)
+        # Add a right-aligned tab stop for alignment
+        pPr = p._p.get_or_add_pPr()
+        tabs = OxmlElement('w:tabs')
+        tab = OxmlElement('w:tab')
+        tab.set(qn('w:val'), 'left')
+        tab.set(qn('w:pos'), '5670')  # ~10cm from left margin
+        tabs.append(tab)
+        pPr.append(tabs)
 
     doc.add_paragraph()
-    _para(doc, "Our (GST Number) GSTIN # 27A78787R45M1ZZ", bold=True)
+    p_gst = doc.add_paragraph()
+    p_gst.paragraph_format.left_indent = Cm(2.0)
+    run_gst = p_gst.add_run("Our (GST Number) GSTIN # ")
+    run_gst.font.name = "Calibri (Body)"
+    run_gst.font.size = Pt(11)
+    run_gst_val = p_gst.add_run("27AADCO8045M1ZZ")
+    run_gst_val.bold = True
+    run_gst_val.font.name = "Calibri (Body)"
+    run_gst_val.font.size = Pt(11)
+
     doc.add_paragraph()
 
-    # Disclaimer
-    _heading(doc, "DISCLAIMER:", 2, DARK)
-    disc_bullets = [
+    # DISCLAIMER
+    p_disc_heading = doc.add_paragraph()
+    p_disc_heading.paragraph_format.space_before = Pt(12)
+    run_disc = p_disc_heading.add_run("DISCLAIMER:")
+    run_disc.bold = True
+    run_disc.font.name = "Calibri (Body)"
+    run_disc.font.size = Pt(11)
+
+    disc_items = [
         "Training or anything else which is not mentioned in above document is out of scope.",
         "For any feature/functionalities to be added which is not in scope will be charged extra as per mutual agreement.",
         "Using the documents or data for any purpose other than this, should be taken in writing by Operisoft.",
     ]
-    for b in disc_bullets:
-        _bullet(doc, b)
+    for idx, item in enumerate(disc_items):
+        p = doc.add_paragraph()
+        p.paragraph_format.left_indent = Cm(1.5)
+        p.paragraph_format.first_line_indent = Cm(-1.5)
+        p.paragraph_format.space_after = Pt(0)
+        p.paragraph_format.line_spacing = 1.0
+        run_label = p.add_run(f"{['i', 'ii', 'iii'][idx]}.\t")
+        run_label.font.name = "Calibri (Body)"
+        run_label.font.size = Pt(9)
+        run_text = p.add_run(item)
+        run_text.font.name = "Calibri (Body)"
+        run_text.font.size = Pt(9)
+
+    # ── Signature Page (last page) ────────────────────────────────────────
+    doc.add_page_break()
+
+    # "Signatures for this Agreement" banner — blue background, white text, centered
+    sig_table_header = doc.add_table(rows=1, cols=1)
+    sig_table_header.style = "Table Grid"
+    sig_cell = sig_table_header.rows[0].cells[0]
+    sig_cell.text = "Signatures for this Agreement"
+    sig_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sig_cell.paragraphs[0].runs[0].font.name = "Calibri (Body)"
+    sig_cell.paragraphs[0].runs[0].font.size = Pt(14)
+    sig_cell.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    _set_cell_bg(sig_cell, "1F2763")
 
     doc.add_paragraph()
-    footer_p = doc.add_paragraph()
-    footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = footer_p.add_run("Operisoft Technologies Pvt Ltd")
-    run.bold = True
-    run.font.color.rgb = DARK
 
-    footer_p2 = doc.add_paragraph()
-    footer_p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer_p2.add_run("CIN: U72900MH2022PTC384302 | GSTIN: 27AADCO8045M1ZZ | www.operisoft.com | E: info@operisoft.com").font.size = Pt(8)
+    # IN WITNESS WHEREOF paragraph
+    p_witness = doc.add_paragraph()
+    p_witness.paragraph_format.space_after = Pt(12)
+    run_bold = p_witness.add_run("IN WITNESS WHEREOF")
+    run_bold.bold = True
+    run_bold.font.name = "Calibri (Body)"
+    run_bold.font.size = Pt(11)
+    run_rest = p_witness.add_run(", the parties hereto each acting with proper authority, for good and valuable consideration and pursuant to the terms of the Agreement have executed this Statement of Work.")
+    run_rest.font.name = "Calibri (Body)"
+    run_rest.font.size = Pt(11)
+
+    doc.add_paragraph()
+
+    # Signature table — 2 columns, 4 rows
+    sig_table = doc.add_table(rows=4, cols=2)
+    sig_table.style = "Table Grid"
+
+    # Row 0: Signature lines + company names
+    cell_left = sig_table.rows[0].cells[0]
+    cell_left.paragraphs[0].clear()
+    p_l = cell_left.paragraphs[0]
+    p_l.paragraph_format.space_before = Pt(40)
+    run_line_l = p_l.add_run("________________________\n")
+    run_line_l.font.name = "Calibri (Body)"
+    run_line_l.font.size = Pt(11)
+    run_company = p_l.add_run("(Operisoft Technologies Pvt Ltd)")
+    run_company.bold = True
+    run_company.font.name = "Calibri (Body)"
+    run_company.font.size = Pt(11)
+
+    cell_right = sig_table.rows[0].cells[1]
+    cell_right.paragraphs[0].clear()
+    p_r = cell_right.paragraphs[0]
+    p_r.paragraph_format.space_before = Pt(40)
+    run_line_r = p_r.add_run("________________________\n")
+    run_line_r.font.name = "Calibri (Body)"
+    run_line_r.font.size = Pt(11)
+    run_cust = p_r.add_run(f"({customer_name})")
+    run_cust.bold = False
+    run_cust.font.name = "Calibri (Body)"
+    run_cust.font.size = Pt(11)
+
+    # Row 1: Name
+    sig_table.rows[1].cells[0].text = "Name:"
+    sig_table.rows[1].cells[0].paragraphs[0].runs[0].bold = True
+    sig_table.rows[1].cells[0].paragraphs[0].runs[0].font.name = "Calibri (Body)"
+    sig_table.rows[1].cells[0].paragraphs[0].runs[0].font.size = Pt(11)
+    sig_table.rows[1].cells[1].text = "Name:"
+    sig_table.rows[1].cells[1].paragraphs[0].runs[0].bold = True
+    sig_table.rows[1].cells[1].paragraphs[0].runs[0].font.name = "Calibri (Body)"
+    sig_table.rows[1].cells[1].paragraphs[0].runs[0].font.size = Pt(11)
+
+    # Row 2: Title
+    sig_table.rows[2].cells[0].text = "Title:"
+    sig_table.rows[2].cells[0].paragraphs[0].runs[0].bold = True
+    sig_table.rows[2].cells[0].paragraphs[0].runs[0].font.name = "Calibri (Body)"
+    sig_table.rows[2].cells[0].paragraphs[0].runs[0].font.size = Pt(11)
+    sig_table.rows[2].cells[1].text = "Title:"
+    sig_table.rows[2].cells[1].paragraphs[0].runs[0].bold = True
+    sig_table.rows[2].cells[1].paragraphs[0].runs[0].font.name = "Calibri (Body)"
+    sig_table.rows[2].cells[1].paragraphs[0].runs[0].font.size = Pt(11)
+
+    # Row 3: Signature Date
+    sig_table.rows[3].cells[0].text = "Signature Date:"
+    sig_table.rows[3].cells[0].paragraphs[0].runs[0].bold = True
+    sig_table.rows[3].cells[0].paragraphs[0].runs[0].font.name = "Calibri (Body)"
+    sig_table.rows[3].cells[0].paragraphs[0].runs[0].font.size = Pt(11)
+    sig_table.rows[3].cells[1].text = "Signature Date:"
+    sig_table.rows[3].cells[1].paragraphs[0].runs[0].bold = True
+    sig_table.rows[3].cells[1].paragraphs[0].runs[0].font.name = "Calibri (Body)"
+    sig_table.rows[3].cells[1].paragraphs[0].runs[0].font.size = Pt(11)
+
+    doc.add_paragraph()
 
     # ── Save file ──────────────────────────────────────────────────────────
     output_dir = tempfile.gettempdir()

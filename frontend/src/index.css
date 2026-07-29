@@ -127,6 +127,22 @@ input[type="text"]:focus {
   border-color: var(--navy);
 }
 
+input[type="date"] {
+  width: 100%;
+  padding: 0.55rem 0.85rem;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: white;
+  transition: border-color 0.2s;
+  outline: none;
+  font-family: inherit;
+}
+input[type="date"]:focus {
+  border-color: var(--navy);
+}
+
 textarea {
   width: 100%;
   padding: 0.75rem 0.85rem;
@@ -310,4 +326,121 @@ textarea:focus {
   height: 1px;
   background: var(--border);
   margin: 1.25rem 0;
+}
+
+/* ── POC / Production engagement-type toggle ── */
+.project-type-toggle {
+  display: inline-flex;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 0.35rem;
+}
+
+.ptype-btn {
+  padding: 0.45rem 1.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: none;
+  background: var(--white);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  letter-spacing: 0.02em;
+}
+
+.ptype-btn + .ptype-btn {
+  border-left: 1.5px solid var(--border);
+}
+
+.ptype-btn.ptype-active {
+  background: var(--navy);
+  color: #fff;
+}
+
+.ptype-btn:not(.ptype-active):hover {
+  background: var(--light);
+  color: var(--text);
+}
+
+/* ── Client Logo Upload ── */
+.logo-upload-area {
+  width: 100%;
+}
+
+.logo-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1rem;
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  background: var(--light);
+}
+.logo-dropzone:hover {
+  border-color: var(--orange);
+  background: #fff8f3;
+}
+.logo-dropzone-icon {
+  font-size: 2rem;
+  margin-bottom: 0.4rem;
+}
+.logo-dropzone-text {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+.logo-dropzone-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.logo-preview-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--light);
+}
+.logo-preview-img {
+  width: 80px;
+  height: 60px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: white;
+  border: 1px solid var(--border);
+  padding: 4px;
+}
+.logo-preview-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex: 1;
+}
+.logo-filename {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-all;
+}
+.logo-remove-btn {
+  background: none;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 5px;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  width: fit-content;
+  transition: background 0.15s;
+}
+.logo-remove-btn:hover {
+  background: #fef2f2;
 }
