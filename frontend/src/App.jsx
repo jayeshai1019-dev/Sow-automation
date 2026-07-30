@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import axios from 'axios'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = 'http://3.108.190.193:8000'
 
 const OPTIONAL_SECTIONS = [
   { key: 'include_landing_zone',        label: '3.6 Implementation of Landing Zone',         desc: 'OU structure, guardrails, AWS Identity Center setup' },
