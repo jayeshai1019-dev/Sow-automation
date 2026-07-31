@@ -1148,7 +1148,7 @@ def generate_sow_document(data: dict) -> str:
     pay_data = [
         ("Beneficiary Name", "OPERISOFT TECHNOLOGIES PVT LTD"),
         ("Bank Name & Add", "ICICI BANK, Vashi Branch, Navi Mumbai"),
-        ("Bank A/c No.", "015105019803"),
+        ("Bank A/c No.", "015105019703"),
         ("Account Type", "Current Account"),
         ("IFSC/IMPS/RTGS CODE", "ICIC0000151"),
         ("SWIFT CODE", "ICICINBBCTS"),
