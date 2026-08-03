@@ -19,6 +19,7 @@ from bedrock_client import (
     generate_tco_assumptions,
     generate_high_level_scope,
     generate_scope_of_work,
+    generate_project_deliverables,
     generate_acceptance_criteria,
     generate_customer_obligations,
     generate_customer_dependencies,
@@ -208,20 +209,21 @@ def _build_toc(doc, project_type, include_post_deploy, include_landing_zone,
     _toc_entry(doc, "3.2   Scope of Work", level=1)
     _toc_entry(doc, "3.3   Key Highlights of the Solution", level=1)
     _toc_entry(doc, "3.4   Proposed Solution Diagram", level=1)
+    _toc_entry(doc, "3.5   Project Deliverables", level=1)
 
     if project_type.strip().upper() == "POC":
-        _toc_entry(doc, "3.5   POC Acceptance Criteria", level=1)
+        _toc_entry(doc, "3.6   POC Acceptance Criteria", level=1)
     else:
-        _toc_entry(doc, "3.5   Project Acceptance Criteria", level=1)
+        _toc_entry(doc, "3.6   Project Acceptance Criteria", level=1)
 
     if include_landing_zone:
-        _toc_entry(doc, "3.6   Implementation of Landing Zone", level=1)
+        _toc_entry(doc, "3.7   Implementation of Landing Zone", level=1)
     if include_control_tower:
-        _toc_entry(doc, "3.7   Configuration of Control Tower Setup", level=1)
+        _toc_entry(doc, "3.8   Configuration of Control Tower Setup", level=1)
     if include_lz_arch:
-        _toc_entry(doc, "3.8   AWS Landing Zone Architecture", level=1)
+        _toc_entry(doc, "3.9   AWS Landing Zone Architecture", level=1)
     if include_paloalto:
-        _toc_entry(doc, "3.9   PaloAlto Next Generation Firewall", level=1)
+        _toc_entry(doc, "3.10  PaloAlto Next Generation Firewall", level=1)
 
     if include_post_deploy:
         _toc_entry(doc, "4.  Post-Deployment Testing and Acceptance", level=0)
@@ -645,26 +647,81 @@ def generate_sow_document(data: dict) -> str:
             customer_name = extracted.get("company_name", customer_name)
 
     # Generate dynamic content via Bedrock (credentials loaded from .env)
+    print(f"\n[SOW] ═══════════════════════════════════════════════════════════")
+    print(f"[SOW] Starting SOW generation for: {customer_name}")
+    print(f"[SOW] Project Type: {project_type}")
+    print(f"[SOW] ═══════════════════════════════════════════════════════════")
+
+    print(f"[SOW] [1/15] Generating 'About Customer'...")
     about_customer      = generate_about_customer(customer_name, mom_text, company_about_us)
+    print(f"[SOW] [1/15] ✓ About Customer generated ({len(about_customer)} chars)")
+
+    print(f"[SOW] [2/15] Generating 'Project Objectives'...")
     proj_objectives     = generate_project_objectives(customer_name, mom_text, project_type)
+    print(f"[SOW] [2/15] ✓ Project Objectives generated ({len(proj_objectives)} chars)")
+
+    print(f"[SOW] [3/15] Generating 'Current Landscape'...")
     current_landscape   = generate_current_landscape(customer_name, mom_text)
+    print(f"[SOW] [3/15] ✓ Current Landscape generated ({len(current_landscape)} chars)")
+
+    print(f"[SOW] [4/15] Generating 'Key Highlights'...")
     key_highlights      = generate_key_highlights(customer_name, mom_text)
+    print(f"[SOW] [4/15] ✓ Key Highlights generated ({len(key_highlights)} chars)")
+
+    print(f"[SOW] [5/15] Generating 'DR Requirements'...")
     dr_reqs             = generate_dr_requirements(customer_name, mom_text)
+    print(f"[SOW] [5/15] ✓ DR Requirements generated")
+
+    print(f"[SOW] [6/15] Generating 'Proposed DRS Solution'...")
     proposed_drs        = generate_proposed_drs_solution(customer_name, mom_text)
+    print(f"[SOW] [6/15] ✓ Proposed DRS Solution generated ({len(proposed_drs)} chars)")
+
+    print(f"[SOW] [7/15] Generating 'High Level Scope'...")
     high_level_scope    = generate_high_level_scope(customer_name, mom_text)
+    print(f"[SOW] [7/15] ✓ High Level Scope generated ({len(high_level_scope)} chars)")
+
+    print(f"[SOW] [8/15] Generating 'Scope of Work'...")
     scope_of_work       = generate_scope_of_work(customer_name, mom_text, project_type)
+    print(f"[SOW] [8/15] ✓ Scope of Work generated ({len(scope_of_work)} chars)")
+
+    print(f"[SOW] [9/15] Generating 'Project Deliverables'...")
+    project_deliverables = generate_project_deliverables(customer_name, mom_text)
+    print(f"[SOW] [9/15] ✓ Project Deliverables generated ({len(project_deliverables)} chars)")
+
+    print(f"[SOW] [10/15] Generating 'Acceptance Criteria'...")
     acceptance_criteria = generate_acceptance_criteria(customer_name, mom_text, project_type)
+    print(f"[SOW] [10/15] ✓ Acceptance Criteria generated ({len(acceptance_criteria)} chars)")
+
+    print(f"[SOW] [11/15] Generating 'Customer Obligations'...")
     customer_obligations = generate_customer_obligations(customer_name, mom_text)
+    print(f"[SOW] [11/15] ✓ Customer Obligations generated ({len(customer_obligations)} chars)")
+
+    print(f"[SOW] [12/15] Generating 'Customer Dependencies'...")
     customer_dependencies = generate_customer_dependencies(customer_name, mom_text)
+    print(f"[SOW] [12/15] ✓ Customer Dependencies generated ({len(customer_dependencies)} chars)")
+
+    print(f"[SOW] [13/15] Generating 'Assumptions'...")
     assumptions = generate_assumptions(customer_name, mom_text)
+    print(f"[SOW] [13/15] ✓ Assumptions generated ({len(assumptions)} chars)")
+
+    print(f"[SOW] [14/15] Generating 'Exclusions'...")
     exclusions = generate_exclusions(customer_name, mom_text)
+    print(f"[SOW] [14/15] ✓ Exclusions generated ({len(exclusions)} chars)")
 
     # Build real AWS Pricing Calculator estimate via MCP
+    print(f"[SOW] [15/15] Building AWS Pricing Calculator estimate...")
     pricing             = build_pricing_estimate(customer_name, mom_text, key_highlights)
+    print(f"[SOW] [15/15] ✓ Pricing estimate built (URL: {pricing.get('url', 'N/A')})")
 
     # Pass cost_summary to tco_assumptions so Bedrock generates service-specific assumptions
     cost_summary        = pricing.get("cost_summary", "")
+    print(f"[SOW] [BONUS] Generating 'TCO Assumptions' based on pricing...")
     tco_assumptions     = generate_tco_assumptions(customer_name, mom_text, cost_summary)
+    print(f"[SOW] [BONUS] ✓ TCO Assumptions generated ({len(tco_assumptions)} chars)")
+
+    print(f"[SOW] ───────────────────────────────────────────────────────────")
+    print(f"[SOW] All Bedrock sections generated. Building DOCX document...")
+    print(f"[SOW] ───────────────────────────────────────────────────────────")
 
     doc = Document()
 
@@ -832,11 +889,16 @@ def generate_sow_document(data: dict) -> str:
     _para(doc, "[Proposed Solution Architecture Diagram – Please insert diagram here]", italic=True, color=RGBColor(0x99, 0x99, 0x99))
     _section_divider(doc)
 
-    # 3.5 heading is conditional on project type
+    # 3.5 Project Deliverables (Bedrock-generated)
+    _heading(doc, "3.5 Project Deliverables", 2, ORANGE)
+    _render_ai_content(doc, project_deliverables)
+    _section_divider(doc)
+
+    # 3.6 heading is conditional on project type
     if project_type.strip().upper() == "POC":
-        ac_heading = "3.5 POC Acceptance Criteria"
+        ac_heading = "3.6 POC Acceptance Criteria"
     else:
-        ac_heading = "3.5 Project Acceptance Criteria"
+        ac_heading = "3.6 Project Acceptance Criteria"
     _heading(doc, ac_heading, 2, ORANGE)
     _render_ai_content(doc, acceptance_criteria)
     _section_divider(doc)
@@ -848,10 +910,10 @@ def generate_sow_document(data: dict) -> str:
             _bullet(doc, b)
         _section_divider(doc)
 
-    # Optional sections 3.6, 3.7, 3.8, 3.9
-    sec_num = 6
+    # Optional sections 3.7, 3.8, 3.9, 3.10
+    sec_num = 7
     if include_landing_zone:
-        _heading(doc, "3.6 Implementation of Landing Zone", 2, ORANGE)
+        _heading(doc, "3.7 Implementation of Landing Zone", 2, ORANGE)
         _para(doc, "In this solution, we propose setting up a Landing zone on the newly created AWS account setup. We are proposing the following Landing Zone architecture:")
         doc.add_paragraph()
         lz_table = doc.add_table(rows=1, cols=3)
@@ -888,7 +950,7 @@ def generate_sow_document(data: dict) -> str:
         sec_num += 1
 
     if include_control_tower:
-        _heading(doc, "3.7 Configuration of Control Tower Setup", 2, ORANGE)
+        _heading(doc, "3.8 Configuration of Control Tower Setup", 2, ORANGE)
         ct_bullets = [
             "Enable Control Tower from AWS Console",
             "Register OU to Control Tower using the console",
@@ -902,7 +964,7 @@ def generate_sow_document(data: dict) -> str:
         _section_divider(doc)
 
     if include_lz_arch:
-        _heading(doc, "3.8 AWS Landing Zone Architecture", 2, ORANGE)
+        _heading(doc, "3.9 AWS Landing Zone Architecture", 2, ORANGE)
         lza_bullets = [
             "End user account provisioning through AWS Service Catalog (Account factory)",
             "Centralized monitoring and notifications for each OU using Amazon CloudWatch and Amazon SNS",
@@ -918,7 +980,7 @@ def generate_sow_document(data: dict) -> str:
         _section_divider(doc)
 
     if include_paloalto:
-        _heading(doc, "3.9 PaloAlto Next Generation Firewall", 2, ORANGE)
+        _heading(doc, "3.10 PaloAlto Next Generation Firewall", 2, ORANGE)
         _para(doc, "We propose PaloAlto Next Generation Firewall with advanced security features like IPS, URL filtering, Bot Protection, Sandboxing which will inspect all the incoming and outgoing traffic.")
         _para(doc, "Key VM-Series Features and Capabilities:", bold=True)
         for b in PALOALTO_BULLETS:
@@ -1307,4 +1369,8 @@ def generate_sow_document(data: dict) -> str:
     filename = f"SOW_{customer_name.replace(' ', '_')}.docx"
     output_path = os.path.join(output_dir, filename)
     doc.save(output_path)
+    print(f"[SOW] ═══════════════════════════════════════════════════════════")
+    print(f"[SOW] ✓ SOW document saved: {output_path}")
+    print(f"[SOW] ✓ Generation complete for: {customer_name}")
+    print(f"[SOW] ═══════════════════════════════════════════════════════════\n")
     return output_path

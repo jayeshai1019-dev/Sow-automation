@@ -611,6 +611,63 @@ Generate the header line, followed by the bullet points (one per line, starting 
     return call_bedrock(prompt)
 
 
+def generate_project_deliverables(customer_name: str, mom_text: str) -> str:
+    """Generate 'Project Deliverables' section from MOM notes — bullet list of concrete deliverables."""
+    prompt = f"""You are a solutions consultant writing the "Project Deliverables" section of a formal AWS Statement of Work (SOW) for {customer_name}, based on the meeting notes (MOM) below.
+
+MOM Notes:
+{mom_text}
+
+## Task
+Generate a comprehensive bullet-point list of concrete, specific project deliverables that Operisoft will provide to the customer upon completion of this engagement. Each deliverable should be a tangible outcome — something the customer can verify has been completed.
+
+## Rules
+- Each bullet must describe a single, specific deliverable (not a vague capability).
+- Deliverables should cover: infrastructure setup, service configurations, integrations, automation, security controls, user setup, validation/testing activities, and documentation/handover.
+- Derive deliverables ONLY from what is described in the MOM — do not invent services or components not implied by the meeting notes.
+- Order deliverables in a logical sequence: core infrastructure first, then configurations, then integrations/automation, then user setup, then validation, then documentation/handover.
+- Use past-tense or completion-style phrasing (e.g., "AWS infrastructure setup as per agreed architecture", "Site-to-Site VPN setup for all locations", "Handover documentation provided").
+- Total output should be 8-20 bullets depending on the complexity of the project described in the MOM.
+- Start each bullet with "Ø  " (two spaces after the symbol).
+- No headings, no sub-bullets, no markdown formatting.
+- Formal, third-person tone suitable for a contractual document.
+
+## Example (infrastructure/networking project):
+Ø  AWS infrastructure setup as per agreed architecture
+Ø  Amazon FSx for Windows File Server configured
+Ø  Individual user storage (mapped drives) configured in FSx
+Ø  Department-wise shared storage configured in FSx
+Ø  AWS Managed Active Directory setup completed
+Ø  Initial user creation and permission configuration in AD
+Ø  Site-to-Site VPN setup for all three locations (LPHO, LPS, LPK)
+Ø  Remote Access VPN setup for remote users
+Ø  Amazon S3 bucket created for production data storage
+Ø  Automation setup for data sync from production systems to S3
+Ø  Scheduled jobs configured to run twice daily
+Ø  S3 versioning enabled for incremental backup
+Ø  User drive mapping completed for ~121 users
+Ø  Security permissions and access controls implemented
+Ø  Validation completed for access, VPN, and data sync
+Ø  Handover documentation provided
+Ø  One-time user setup and configuration support provided
+
+## Example (application/AI solution):
+Ø  Web-based UI deployed on AWS Amplify
+Ø  User authentication configured via Amazon Cognito
+Ø  API Gateway and Lambda functions deployed for backend processing
+Ø  Amazon S3 buckets configured for document storage and processing
+Ø  AI/LLM integration configured via Amazon Bedrock
+Ø  Business rules and extraction logic implemented
+Ø  Structured output generation (Excel/CSV) functional
+Ø  End-to-end workflow validated and tested
+Ø  AWS CloudFormation templates for infrastructure provisioning
+Ø  Handover documentation provided
+
+## Output
+Generate ONLY the bullet points (one per line, starting with "Ø  "). No headings, no preamble, no explanation."""
+    return call_bedrock(prompt)
+
+
 def generate_acceptance_criteria(customer_name: str, mom_text: str, project_type: str = "Production", scope_of_work_text: str = "") -> str:
     type_label = "POC" if project_type.strip().upper() == "POC" else "Production"
     section_heading = "POC Acceptance Criteria" if type_label == "POC" else "3.5 Project Acceptance Criteria"
